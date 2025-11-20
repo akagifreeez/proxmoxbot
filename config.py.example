@@ -1,0 +1,18 @@
+# config.py
+
+# --- Discord設定 ---
+DISCORD_TOKEN = 'あなたのDiscord_Bot_Token'
+GUILD_ID = 999999999999999999         # サーバーID (int)
+ALLOWED_CATEGORY_ID = 888888888888888888  # 操作可能なカテゴリID (int)
+ALERT_CHANNEL_ID = 777777777777777777     # 通知先チャンネルID (int)
+
+# --- Proxmox設定 ---
+PROXMOX_HOST = '192.168.1.100'
+PROXMOX_USER = 'root@pam'
+PROXMOX_TOKEN_NAME = 'bot'
+PROXMOX_TOKEN_VALUE = 'xxxxx-xxxxx-xxxxx'
+NODE_NAME = 'pve'
+
+# --- 監視設定 ---
+# 監視対象のVMIDリスト (ここに書いたIDは死活監視されます)
+MONITOR_VM_IDS = [100, 101, 105]

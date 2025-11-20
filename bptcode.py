@@ -4,34 +4,18 @@ from discord.ext import commands, tasks
 from proxmoxer import ProxmoxAPI
 import urllib3
 import asyncio
-import os
 from datetime import timedelta
-from dotenv import load_dotenv
+import config  # 作成したconfig.pyをインポート
 
-# --- 設定読み込み ---
-load_dotenv()
-
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-GUILD_ID = int(os.getenv('GUILD_ID'))
-ALLOWED_CATEGORY_ID = int(os.getenv('ALLOWED_CATEGORY_ID'))
-ALERT_CHANNEL_ID = int(os.getenv('ALERT_CHANNEL_ID'))
-
-PROXMOX_HOST = os.getenv('PROXMOX_HOST')
-PROXMOX_USER = os.getenv('PROXMOX_USER')
-PROXMOX_TOKEN_NAME = os.getenv('PROXMOX_TOKEN_NAME')
-PROXMOX_TOKEN_VALUE = os.getenv('PROXMOX_TOKEN_VALUE')
-NODE_NAME = os.getenv('NODE_NAME')
-
-# 監視対象VMリスト
-MONITOR_VM_IDS = [100, 101, 105]
-
-# SSL警告無視
+# SSL証明書エラーの警告を無視
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- Proxmox API ---
+# --- Proxmox API 接続 ---
 proxmox = ProxmoxAPI(
-    PROXMOX_HOST, user=PROXMOX_USER, 
-    token_name=PROXMOX_TOKEN_NAME, token_value=PROXMOX_TOKEN_VALUE,
+    config.PROXMOX_HOST,
+    user=config.PROXMOX_USER, 
+    token_name=config.PROXMOX_TOKEN_NAME,
+    token_value=config.PROXMOX_TOKEN_VALUE,
     verify_ssl=False
 )
 
@@ -43,7 +27,8 @@ class ProxmoxBot(commands.Bot):
         super().__init__(command_prefix='!', intents=intents)
 
     async def setup_hook(self):
-        guild = discord.Object(id=GUILD_ID)
+        # config.GUILD_ID を使用
+        guild = discord.Object(id=config.GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
         print("Slash commands synced!")
@@ -51,14 +36,16 @@ class ProxmoxBot(commands.Bot):
         if not self.monitor_vms.is_running():
             self.monitor_vms.start()
 
+    # --- 異常監視タスク ---
     @tasks.loop(minutes=1)
     async def monitor_vms(self):
-        channel = self.get_channel(ALERT_CHANNEL_ID)
+        channel = self.get_channel(config.ALERT_CHANNEL_ID)
         if not channel: return
 
-        for vmid in MONITOR_VM_IDS:
+        # config.MONITOR_VM_IDS を使用
+        for vmid in config.MONITOR_VM_IDS:
             try:
-                status_data = proxmox.nodes(NODE_NAME).qemu(vmid).status.current.get()
+                status_data = proxmox.nodes(config.NODE_NAME).qemu(vmid).status.current.get()
                 if status_data.get('status') == 'stopped':
                     await channel.send(f'🚨 **緊急**: VMID {vmid} ({status_data.get("name")}) が停止しています！')
             except Exception as e:
@@ -70,12 +57,13 @@ class ProxmoxBot(commands.Bot):
 
 bot = ProxmoxBot()
 
-# --- 共通チェック関数 (カテゴリのみチェック) ---
+# --- 共通チェック関数 ---
 def check_access(interaction: discord.Interaction) -> str | None:
-    # カテゴリIDを取得。ない場合はNone
+    # カテゴリIDチェック
     category_id = getattr(interaction.channel, 'category_id', None)
     
-    if category_id != ALLOWED_CATEGORY_ID:
+    # config.ALLOWED_CATEGORY_ID と比較
+    if category_id != config.ALLOWED_CATEGORY_ID:
         return "❌ このコマンドは指定された管理カテゴリ内のチャンネルでのみ使用可能です。"
     return None
 
@@ -90,27 +78,20 @@ async def list_vms(interaction: discord.Interaction):
 
     await interaction.response.defer()
     try:
-        # 全VM取得
-        vms = proxmox.nodes(NODE_NAME).qemu.get()
-        # VMID順にソート
+        vms = proxmox.nodes(config.NODE_NAME).qemu.get()
         vms.sort(key=lambda x: int(x['vmid']))
 
-        # Embed作成
         embed = discord.Embed(title="📦 Proxmox VM List", color=discord.Color.blue())
-        
         description_lines = []
         for vm in vms:
             status = vm.get('status')
             icon = "🟢" if status == 'running' else "🔴"
             vmid = vm.get('vmid')
             name = vm.get('name')
-            # フォーマット: 🟢 100: MyServer
             description_lines.append(f"{icon} **{vmid}**: {name}")
 
-        # リストが長すぎる場合の対策（2000文字制限対策として分割するか、今回はシンプルに結合）
         embed.description = "\n".join(description_lines)
         await interaction.followup.send(embed=embed)
-
     except Exception as e:
         await interaction.followup.send(f'❌ 取得失敗: {e}')
 
@@ -124,43 +105,33 @@ async def info(interaction: discord.Interaction, vmid: int):
 
     await interaction.response.defer()
     try:
-        # 現在の動的ステータス (CPU負荷, Uptimeなど)
-        status = proxmox.nodes(NODE_NAME).qemu(vmid).status.current.get()
-        # 静的な設定情報 (割り当てコア数, メモリ設定など)
-        config = proxmox.nodes(NODE_NAME).qemu(vmid).config.get()
+        status = proxmox.nodes(config.NODE_NAME).qemu(vmid).status.current.get()
+        conf = proxmox.nodes(config.NODE_NAME).qemu(vmid).config.get()
 
         vm_name = status.get('name', 'Unknown')
         vm_status = status.get('status', 'unknown')
-        
-        # Embedの色決定
         color = discord.Color.green() if vm_status == 'running' else discord.Color.red()
 
         embed = discord.Embed(title=f"ℹ️ VM Info: {vm_name}", color=color)
         embed.add_field(name="VMID", value=str(vmid), inline=True)
         embed.add_field(name="Status", value=vm_status.upper(), inline=True)
         
-        # CPU情報
-        cores = config.get('cores', '?')
+        cores = conf.get('cores', '?')
         cpu_usage = status.get('cpu', 0) * 100
         embed.add_field(name="CPU", value=f"{cores} Cores\nUsage: {cpu_usage:.1f}%", inline=True)
 
-        # メモリ情報 (バイト→MB変換)
         max_mem = int(status.get('maxmem', 0)) / 1024 / 1024
         cur_mem = int(status.get('mem', 0)) / 1024 / 1024
         embed.add_field(name="Memory", value=f"{cur_mem:.0f}MB / {max_mem:.0f}MB", inline=True)
 
-        # 稼働時間
         uptime_sec = int(status.get('uptime', 0))
         uptime_str = str(timedelta(seconds=uptime_sec))
         embed.add_field(name="Uptime", value=uptime_str, inline=True)
 
-        # ネットワーク (QEMU Guest Agentが入っている場合のみIPが取れる場合があるが、APIからの取得は工夫が必要)
-        # ここでは簡易的にconfigのnet0設定を表示
-        net0 = config.get('net0', 'N/A')
+        net0 = conf.get('net0', 'N/A')
         embed.add_field(name="Network (net0)", value=f"`{net0}`", inline=False)
 
         await interaction.followup.send(embed=embed)
-
     except Exception as e:
         await interaction.followup.send(f'❌ 情報取得失敗: {e}')
 
@@ -174,13 +145,13 @@ async def create(interaction: discord.Interaction, template_id: int, new_vmid: i
 
     await interaction.response.defer()
     try:
-        proxmox.nodes(NODE_NAME).qemu(template_id).clone.post(
+        proxmox.nodes(config.NODE_NAME).qemu(template_id).clone.post(
             newid=new_vmid, name=name, full=1
         )
         await interaction.followup.send(
             f'✅ **作成完了**: `{name}` (ID: {new_vmid})\n'
             f'Cloud-Init設定により起動後にTailscaleへ接続されます。\n'
-            f'コマンド: `/start vmid:{new_vmid}`'
+            f'起動コマンド: `/start vmid:{new_vmid}`'
         )
     except Exception as e:
         await interaction.followup.send(f'❌ 作成失敗: {e}')
@@ -194,7 +165,7 @@ async def resize(interaction: discord.Interaction, vmid: int, cores: int, memory
 
     await interaction.response.defer()
     try:
-        proxmox.nodes(NODE_NAME).qemu(vmid).config.post(cores=cores, memory=memory_mb)
+        proxmox.nodes(config.NODE_NAME).qemu(vmid).config.post(cores=cores, memory=memory_mb)
         await interaction.followup.send(f'⚙️ **設定変更**: VMID {vmid} → {cores} Cores, {memory_mb} MB\n⚠️ 再起動後に適用されます。')
     except Exception as e:
         await interaction.followup.send(f'❌ 変更失敗: {e}')
@@ -208,7 +179,7 @@ async def start(interaction: discord.Interaction, vmid: int):
 
     await interaction.response.defer()
     try:
-        proxmox.nodes(NODE_NAME).qemu(vmid).status.start.post()
+        proxmox.nodes(config.NODE_NAME).qemu(vmid).status.start.post()
         await interaction.followup.send(f'▶️ VMID: {vmid} を起動しました。')
     except Exception as e:
         await interaction.followup.send(f'❌ 起動失敗: {e}')
@@ -222,7 +193,7 @@ async def reboot(interaction: discord.Interaction, vmid: int):
 
     await interaction.response.defer()
     try:
-        proxmox.nodes(NODE_NAME).qemu(vmid).status.reboot.post()
+        proxmox.nodes(config.NODE_NAME).qemu(vmid).status.reboot.post()
         await interaction.followup.send(f'🔄 VMID: {vmid} を再起動中...')
     except Exception as e:
         await interaction.followup.send(f'❌ 再起動失敗: {e}')
@@ -237,13 +208,13 @@ async def delete(interaction: discord.Interaction, vmid: int):
     await interaction.response.defer()
     try:
         try:
-            proxmox.nodes(NODE_NAME).qemu(vmid).status.stop.post()
+            proxmox.nodes(config.NODE_NAME).qemu(vmid).status.stop.post()
             await asyncio.sleep(2)
         except:
             pass
-        proxmox.nodes(NODE_NAME).qemu(vmid).delete()
+        proxmox.nodes(config.NODE_NAME).qemu(vmid).delete()
         await interaction.followup.send(f'🗑️ **削除完了**: VMID {vmid} を削除しました。')
     except Exception as e:
         await interaction.followup.send(f'❌ 削除失敗: {e}')
 
-bot.run(DISCORD_TOKEN)
+bot.run(config.DISCORD_TOKEN)
