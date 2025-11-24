@@ -1,17 +1,20 @@
 # Proxmox Discord Bot
 
-A Discord bot to manage Proxmox Virtual Machines (VMs) directly from your Discord server. This bot allows you to list, create, start, stop, resize, and delete VMs, as well as monitor their status.
+A Discord bot to manage Proxmox Virtual Machines (VMs) and LXC Containers directly from your Discord server. This bot allows you to list, create, start, stop, resize, and delete resources, as well as monitor their status with ease.
 
 ## Features
 
-- **List VMs**: View all VMs on the Proxmox node with their status.
-- **VM Info**: Get detailed specifications and status of a specific VM.
+- **Resource Support**: Supports both **QEMU VMs** and **LXC Containers**.
+- **List Resources**: View all VMs and Containers on the Proxmox node with their status and type.
+- **Detailed Info**: Get specifications and status of a specific resource, with interactive control buttons.
 - **Create VM**: Clone a VM from a template.
-- **Resize VM**: Change the CPU cores and memory of a VM.
-- **Power Management**: Start and reboot VMs.
-- **Delete VM**: Delete a VM (with a safety stop).
-- **Monitoring**: Periodically checks the status of specified VMs and sends an alert if they are stopped.
+- **Resize Resource**: Change the CPU cores and memory of a VM or Container.
+- **Power Management**: Start, Reboot, Shutdown (ACPI), and Stop (Force) resources.
+- **Snapshot Management**: Create, list, and rollback snapshots directly from Discord.
+- **Dynamic Monitoring**: Add or remove resources from the monitoring list using commands without restarting the bot.
+- **Autocomplete**: VMIDs are autocompleted in commands for easier usage.
 - **Access Control**: Restricts commands to a specific Discord category.
+- **Async I/O**: Optimized for performance with asynchronous API calls.
 
 ## Prerequisites
 
@@ -53,7 +56,9 @@ A Discord bot to manage Proxmox Virtual Machines (VMs) directly from your Discor
     NODE_NAME = 'pve'
 
     # --- Monitoring Settings ---
-    # List of VM IDs to monitor
+    # List of VM IDs to monitor (Initial Setup Only)
+    # On first run, this list is saved to 'monitor_list.json'.
+    # Subsequent management should be done via /monitor commands.
     MONITOR_VM_IDS = [100, 101, 105]
     ```
 
@@ -67,15 +72,30 @@ python bptcode.py
 
 ### Commands
 
-All commands are slash commands (`/`).
+All commands are slash commands (`/`). VMIDs support autocomplete.
 
-- `/list`: Displays a list of all VMs and their status.
-- `/info <vmid>`: Shows detailed information about a VM (CPU, Memory, Uptime, etc.).
+#### General
+- `/list`: Displays a list of all VMs and LXC Containers with their status.
+- `/info <vmid>`: Shows detailed info and provides interactive buttons (**Start**, **Reboot**, **Shutdown**) for the resource.
 - `/create <template_id> <new_vmid> <name>`: Creates a new VM by cloning a template.
-- `/resize <vmid> <cores> <memory_mb>`: Updates the CPU cores and memory (MB) for a VM. Changes apply after a reboot.
-- `/start <vmid>`: Starts a stopped VM.
-- `/reboot <vmid>`: Reboots a running VM.
-- `/delete <vmid>`: Deletes a VM. **Warning**: This action is irreversible.
+- `/resize <vmid> <cores> <memory_mb>`: Updates the CPU cores and memory (MB). Changes apply after a reboot.
+- `/delete <vmid>`: Deletes a resource. **Warning**: This action is irreversible.
+
+#### Power Management
+- `/start <vmid>`: Starts a resource.
+- `/reboot <vmid>`: Reboots a resource.
+- `/shutdown <vmid>`: Sends an ACPI shutdown signal (graceful stop).
+- `/stop <vmid>`: Forcefully stops the resource (power off). Requires confirmation.
+
+#### Snapshot Management
+- `/snapshot create <vmid> <name>`: Creates a snapshot.
+- `/snapshot list <vmid>`: Lists all snapshots.
+- `/snapshot rollback <vmid> <name>`: Rolls back to a specific snapshot (requires confirmation).
+
+#### Monitoring Configuration
+- `/monitor add <vmid>`: Adds a resource to the monitoring list.
+- `/monitor remove <vmid>`: Removes a resource from the monitoring list.
+- `/monitor list`: Displays currently monitored resources.
 
 ## Permissions
 
@@ -83,4 +103,4 @@ The bot enforces usage within a specific Discord category defined by `ALLOWED_CA
 
 ## Monitoring
 
-The bot runs a background task every minute to check the status of VMs listed in `MONITOR_VM_IDS`. If a monitored VM is found to be stopped, an alert is sent to the `ALERT_CHANNEL_ID`.
+The bot runs a background task every minute to check the status of monitored resources. If a monitored resource is found to be stopped, an alert is sent to the `ALERT_CHANNEL_ID`. The monitoring list is stored persistently in `monitor_list.json`.
