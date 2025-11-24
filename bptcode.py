@@ -162,8 +162,9 @@ def load_monitor_list() -> list[int]:
     """Loads the list of monitored VMIDs from a JSON file."""
     if not os.path.exists(MONITOR_LIST_FILE):
         # Initialize with config values if file doesn't exist
-        save_monitor_list(config.MONITOR_VM_IDS)
-        return config.MONITOR_VM_IDS
+        initial_list = getattr(config, 'MONITOR_VM_IDS', [])
+        save_monitor_list(initial_list)
+        return initial_list
     try:
         with open(MONITOR_LIST_FILE, 'r') as f:
             return json.load(f)
