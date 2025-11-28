@@ -1,0 +1,5 @@
+discord.py
+proxmoxer
+urllib3
+requests
+matplotlib
