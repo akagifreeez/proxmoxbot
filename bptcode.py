@@ -6,11 +6,18 @@ import urllib3
 import asyncio
 import json
 import os
-from datetime import timedelta
+from datetime import timedelta, datetime
 import config  # 作成したconfig.pyをインポート
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+import io
 
 # SSL証明書エラーの警告を無視
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# matplotlibのバックエンドをAggに設定（GUIなし環境用）
+matplotlib.use('Agg')
 
 # --- Proxmox API 接続 ---
 proxmox = ProxmoxAPI(
@@ -43,6 +50,85 @@ async def get_device_node_and_type(vmid: int):
     except Exception as e:
         print(f"Error getting resource type: {e}")
     return None, None
+
+def create_graph_blocking(data, title, timeframe):
+    """
+    Synchronous function to generate the plot.
+    """
+    # Extract data
+    times = []
+    cpus = []
+    mems = []
+    netins = []
+    netouts = []
+
+    for point in data:
+        # Handle None values
+        t = point.get('time')
+        c = point.get('cpu')
+        m = point.get('mem')
+        ni = point.get('netin')
+        no = point.get('netout')
+
+        if t is None: continue
+
+        times.append(datetime.fromtimestamp(t))
+
+        # CPU: 0.0 - 1.0 -> %
+        # Note: Proxmox can return > 1.0 for multiple cores if not normalized?
+        # Usually it's 0-1 per core or 0-N. The prompt says 0.0-1.0. We multiply by 100.
+        cpus.append((c * 100) if c is not None else 0)
+
+        # Mem: Bytes -> MB
+        mems.append((m / 1024 / 1024) if m is not None else 0)
+
+        # Net: Bytes -> MB (assuming bytes/sec or total bytes, usually rrd is rate?
+        # But 'netin' in rrddata often is average bytes/sec over the interval)
+        # Let's label as MB/s if it's rate, or MB if it's absolute.
+        # Proxmox GUI shows 'Network Traffic' as rate.
+        netins.append((ni / 1024 / 1024) if ni is not None else 0)
+        netouts.append((no / 1024 / 1024) if no is not None else 0)
+
+    # Use Object-Oriented Interface for thread safety
+    fig = Figure(figsize=(10, 12))
+    ax1, ax2, ax3 = fig.subplots(3, 1, sharex=True)
+
+    # CPU Plot
+    ax1.plot(times, cpus, label='CPU Usage', color='blue')
+    ax1.set_title(f'{title} - CPU Usage (%)')
+    ax1.set_ylabel('Usage (%)')
+    ax1.grid(True)
+
+    # Memory Plot
+    ax2.plot(times, mems, label='Memory Usage', color='orange')
+    ax2.set_title(f'{title} - Memory Usage (MB)')
+    ax2.set_ylabel('Memory (MB)')
+    ax2.grid(True)
+
+    # Network Plot
+    ax3.plot(times, netins, label='Net In', color='green')
+    ax3.plot(times, netouts, label='Net Out', color='red')
+    ax3.set_title(f'{title} - Network Traffic (MB/s)')
+    ax3.set_ylabel('Traffic (MB/s)')
+    ax3.legend()
+    ax3.grid(True)
+
+    # Format x-axis dates
+    fig.autofmt_xdate()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    buf.seek(0)
+    # No need to explicitly close fig when using Figure directly in a function scope,
+    # but good practice if it were large.
+    return buf
+
+async def generate_graph(data, title, timeframe):
+    """
+    Asynchronous wrapper to run plotting in a thread.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, create_graph_blocking, data, title, timeframe)
 
 # --- Bot Class定義 ---
 class ProxmoxBot(commands.Bot):
@@ -830,4 +916,55 @@ async def stop(interaction: discord.Interaction, vmid: int):
 
     await interaction.response.send_message(f"⚠️ **警告**: VMID {vmid} を強制停止しますか？\n保存されていないデータは失われる可能性があります。", view=view, ephemeral=True)
 
-bot.run(config.DISCORD_TOKEN)
+# 11. グラフ表示 (/graph)
+@bot.tree.command(name="graph", description="リソース使用状況のグラフを表示")
+@app_commands.describe(vmid="対象のVMID", timeframe="期間 (hour, day, week, month)")
+@app_commands.choices(timeframe=[
+    app_commands.Choice(name="Hour", value="hour"),
+    app_commands.Choice(name="Day", value="day"),
+    app_commands.Choice(name="Week", value="week"),
+    app_commands.Choice(name="Month", value="month")
+])
+@app_commands.autocomplete(vmid=vmid_autocomplete)
+async def graph(interaction: discord.Interaction, vmid: int, timeframe: str = "hour"):
+    """
+    Generates and displays resource usage graphs (CPU, Memory, Network) for a specific VM.
+    特定のVMのリソース使用状況グラフ(CPU, メモリ, ネットワーク)を生成して表示します。
+    """
+    if error := check_access(interaction):
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    await interaction.response.defer()
+    try:
+        node, vm_type = await get_device_node_and_type(vmid)
+        if not node or not vm_type:
+            await interaction.followup.send(f'❌ VMID {vmid} が見つかりません。')
+            return
+
+        resource = getattr(proxmox.nodes(node), vm_type)(vmid)
+
+        # Fetch RRD data
+        # Proxmox API: /nodes/{node}/{type}/{vmid}/rrddata
+        rrd_data = await run_proxmox_async(resource.rrddata.get, timeframe=timeframe)
+
+        if not rrd_data:
+             await interaction.followup.send(f'⚠️ データが見つかりませんでした (Timeframe: {timeframe})')
+             return
+
+        # Get VM Name for title
+        status = await run_proxmox_async(resource.status.current.get)
+        vm_name = status.get('name', f'VM {vmid}')
+        title = f"{vm_name} (ID: {vmid}) - Last {timeframe}"
+
+        # Generate Graph
+        image_buf = await generate_graph(rrd_data, title, timeframe)
+
+        file = discord.File(image_buf, filename=f"graph_{vmid}_{timeframe}.png")
+        await interaction.followup.send(content=f"📊 **Performance Graph**: {title}", file=file)
+
+    except Exception as e:
+        await interaction.followup.send(f'❌ グラフ生成失敗: {e}')
+
+if __name__ == '__main__':
+    bot.run(config.DISCORD_TOKEN)
