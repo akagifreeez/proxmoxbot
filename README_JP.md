@@ -32,7 +32,7 @@ Discordサーバーから直接Proxmox仮想マシン(VM)およびLXCコンテ�
 
 2.  必要なPythonパッケージをインストールします:
     ```bash
-    pip install discord.py proxmoxer urllib3
+    pip install -r requirements.txt
     ```
 
 3.  Botの設定を行います:
@@ -67,7 +67,7 @@ Discordサーバーから直接Proxmox仮想マシン(VM)およびLXCコンテ�
 PythonでBotを起動します:
 
 ```bash
-python bptcode.py
+python main.py
 ```
 
 ### コマンド

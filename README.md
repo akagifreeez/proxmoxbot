@@ -32,7 +32,7 @@ A Discord bot to manage Proxmox Virtual Machines (VMs) and LXC Containers direct
 
 2.  Install the required Python packages:
     ```bash
-    pip install discord.py proxmoxer urllib3
+    pip install -r requirements.txt
     ```
 
 3.  Configure the bot:
@@ -67,7 +67,7 @@ A Discord bot to manage Proxmox Virtual Machines (VMs) and LXC Containers direct
 Run the bot using Python:
 
 ```bash
-python bptcode.py
+python main.py
 ```
 
 ### Commands
