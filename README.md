@@ -55,11 +55,6 @@ A Discord bot to manage Proxmox Virtual Machines (VMs) and LXC Containers direct
     PROXMOX_TOKEN_VALUE = 'xxxxx-xxxxx-xxxxx'
     NODE_NAME = 'pve'
 
-    # --- Monitoring Settings ---
-    # List of VM IDs to monitor (Initial Setup Only)
-    # On first run, this list is saved to 'monitor_list.json'.
-    # Subsequent management should be done via /monitor commands.
-    MONITOR_VM_IDS = [100, 101, 105]
     ```
 
 ## Usage
