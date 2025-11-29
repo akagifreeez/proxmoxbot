@@ -13,8 +13,3 @@ PROXMOX_TOKEN_NAME = 'bot'
 PROXMOX_TOKEN_VALUE = 'xxxxx-xxxxx-xxxxx'
 NODE_NAME = 'pve'
 
-# --- 監視設定 ---
-# 監視対象のVMIDリスト (初期設定用)
-# 初回起動時にこのリストが 'monitor_list.json' に保存されます。
-# 以降の追加・削除はDiscordコマンド (/monitor) で行ってください。
-MONITOR_VM_IDS = [100, 101, 105]
